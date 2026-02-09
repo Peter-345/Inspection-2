@@ -1178,23 +1178,23 @@ def generate_html_report(csv_content: str, images_dict: Dict[str, str], logo_bas
 # Streamlit App
 def main():
     st.set_page_config(
-        page_title="Audit Bericht Generator",
+        page_title="Audit Report Generator",
         page_icon="📋",
         layout="wide"
     )
 
-    st.title("📋 Audit Bericht Generator")
+    st.title("📋 Audit Report Generator")
     st.markdown("---")
 
     # Sidebar
     with st.sidebar:
-        st.header("ℹ️ Anleitung")
+        st.header("ℹ️ Instructions")
         st.markdown("""
-        1. **CSV-Datei hochladen**
-        2. **Fotos hochladen** (optional)
-        3. **Logo hochladen** (optional)
-        4. **Bericht generieren**
-        5. **HTML-Datei herunterladen**
+        1. **Upload CSV file**
+        2. **Upload photos** (optional)
+        3. **Upload logo** (optional)
+        4. **Generate report**
+        5. **Download HTML file**
         """)
 
         st.markdown("---")
@@ -1204,26 +1204,26 @@ def main():
     col1, col2 = st.columns([2, 1])
 
     with col1:
-        st.header("1. CSV-Datei hochladen")
+        st.header("1. Upload CSV File")
         csv_file = st.file_uploader(
-            "Wählen Sie die Audit CSV-Datei",
+            "Select the audit CSV file",
             type=['csv'],
-            help="Die CSV-Datei mit den Audit-Daten"
+            help="The CSV file containing the audit data"
         )
 
-        st.header("2. Fotos hochladen")
+        st.header("2. Upload Photos")
         image_files = st.file_uploader(
-            "Wählen Sie die Fotos (mehrere möglich)",
+            "Select photos (multiple files possible)",
             type=['jpg', 'jpeg', 'png'],
             accept_multiple_files=True,
-            help="Die Fotos, die im Bericht verwendet werden sollen"
+            help="Photos to be included in the report"
         )
 
-        st.header("3. Logo hochladen (optional)")
+        st.header("3. Upload Logo (Optional)")
         logo_file = st.file_uploader(
-            "Firmenlogo",
+            "Company Logo",
             type=['jpg', 'jpeg', 'png'],
-            help="Optional: Ihr Firmenlogo für den Header"
+            help="Optional: Your company logo for the header"
         )
 
     with col2:
@@ -1232,12 +1232,12 @@ def main():
         if csv_file:
             st.success(f"✅ CSV: {csv_file.name}")
         else:
-            st.info("⏳ Warte auf CSV-Datei")
+            st.info("⏳ Waiting for CSV file")
 
         if image_files:
-            st.success(f"✅ {len(image_files)} Fotos hochgeladen")
+            st.success(f"✅ {len(image_files)} photos uploaded")
         else:
-            st.info("⏳ Keine Fotos (optional)")
+            st.info("⏳ No photos (optional)")
 
         if logo_file:
             st.success(f"✅ Logo: {logo_file.name}")
@@ -1246,23 +1246,23 @@ def main():
 
     # Generate button
     if csv_file:
-        if st.button("🚀 Bericht generieren", type="primary", use_container_width=True):
-            with st.spinner("Generiere Bericht..."):
+        if st.button("🚀 Generate Report", type="primary", use_container_width=True):
+            with st.spinner("Generating report..."):
                 try:
-                    # Lese CSV
+                    # Read CSV
                     csv_content = csv_file.read().decode('utf-8-sig')
 
-                    # Verarbeite Bilder
+                    # Process images
                     images_dict = {}
                     if image_files:
                         for img_file in image_files:
-                            img_name = img_file.name.split('.')[0]  # ohne Extension
+                            img_name = img_file.name.split('.')[0]  # without extension
                             img_data = base64.b64encode(img_file.read()).decode()
                             ext = img_file.name.split('.')[-1].lower()
                             mime = 'image/jpeg' if ext in ['jpg', 'jpeg'] else 'image/png'
                             images_dict[img_name] = f"data:{mime};base64,{img_data}"
 
-                    # Verarbeite Logo
+                    # Process logo
                     logo_base64 = ''
                     if logo_file:
                         logo_data = base64.b64encode(logo_file.read()).decode()
@@ -1270,39 +1270,39 @@ def main():
                         mime = 'image/jpeg' if ext in ['jpg', 'jpeg'] else 'image/png'
                         logo_base64 = f"data:{mime};base64,{logo_data}"
 
-                    # Generiere HTML
+                    # Generate HTML
                     html_content = generate_html_report(csv_content, images_dict, logo_base64)
 
-                    # Berechne Statistiken
+                    # Calculate statistics
                     file_size_mb = len(html_content.encode('utf-8')) / (1024 * 1024)
 
-                    st.success("✅ Bericht erfolgreich generiert!")
+                    st.success("✅ Report generated successfully!")
 
-                    # Zeige Statistiken
+                    # Show statistics
                     col1, col2, col3 = st.columns(3)
                     with col1:
-                        st.metric("Fotos", len(images_dict))
+                        st.metric("Photos", len(images_dict))
                     with col2:
-                        st.metric("Dateigröße", f"{file_size_mb:.1f} MB")
+                        st.metric("File Size", f"{file_size_mb:.1f} MB")
                     with col3:
                         st.metric("Format", "HTML")
 
                     # Download button
                     st.download_button(
-                        label="📥 HTML-Bericht herunterladen",
+                        label="📥 Download HTML Report",
                         data=html_content,
-                        file_name=f"audit_bericht_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
+                        file_name=f"audit_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
                         mime="text/html",
                         use_container_width=True
                     )
 
-                    # Info-Box statt Vorschau (verhindert WebSocket-Fehler bei großen Berichten)
-                    st.info("💡 **Hinweis:** Laden Sie die HTML-Datei herunter und öffnen Sie sie in Ihrem Browser, um den vollständigen Bericht zu sehen.")
+                    # Info box instead of preview (prevents WebSocket errors for large reports)
+                    st.info("💡 **Note:** Download the HTML file and open it in your browser to view the complete report.")
 
                 except Exception as e:
-                    st.error(f"❌ Fehler beim Generieren: {str(e)}")
+                    st.error(f"❌ Error generating report: {str(e)}")
     else:
-        st.warning("⚠️ Bitte laden Sie zuerst eine CSV-Datei hoch")
+        st.warning("⚠️ Please upload a CSV file first")
 
 
 if __name__ == '__main__':
