@@ -1273,7 +1273,19 @@ def main():
                     # Generiere HTML
                     html_content = generate_html_report(csv_content, images_dict, logo_base64)
 
+                    # Berechne Statistiken
+                    file_size_mb = len(html_content.encode('utf-8')) / (1024 * 1024)
+
                     st.success("✅ Bericht erfolgreich generiert!")
+
+                    # Zeige Statistiken
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Fotos", len(images_dict))
+                    with col2:
+                        st.metric("Dateigröße", f"{file_size_mb:.1f} MB")
+                    with col3:
+                        st.metric("Format", "HTML")
 
                     # Download button
                     st.download_button(
@@ -1284,9 +1296,8 @@ def main():
                         use_container_width=True
                     )
 
-                    # Preview
-                    with st.expander("👁️ Vorschau"):
-                        st.components.v1.html(html_content, height=600, scrolling=True)
+                    # Info-Box statt Vorschau (verhindert WebSocket-Fehler bei großen Berichten)
+                    st.info("💡 **Hinweis:** Laden Sie die HTML-Datei herunter und öffnen Sie sie in Ihrem Browser, um den vollständigen Bericht zu sehen.")
 
                 except Exception as e:
                     st.error(f"❌ Fehler beim Generieren: {str(e)}")
