@@ -1,20 +1,65 @@
 #!/usr/bin/env python3
 """
-Web-Anwendung für Audit-Bericht Generator
-Kann auf Streamlit Cloud oder anderen Hosting-Plattformen deployed werden
+HTML Report Generator für Audit-Berichte
+Erstellt einen responsiven HTML-Bericht aus CSV-Daten und zugehörigen Fotos
 """
 
-import streamlit as st
 import csv
+import os
 import base64
-import io
-import zipfile
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Tuple
-import re
+import sys
 
 
-# Kopiere die Hilfsfunktionen aus generate_report_v3.py
+def read_csv_data(csv_path: str) -> Tuple[Dict, List[Dict]]:
+    """
+    Liest die CSV-Datei und gibt Metadaten und Items zurück
+
+    Returns:
+        Tuple[Dict, List[Dict]]: (metadata, items)
+    """
+    metadata = {}
+    items = []
+
+    with open(csv_path, 'r', encoding='utf-8-sig') as f:
+        reader = csv.reader(f)
+
+        # Lese die ersten Zeilen als Metadata (bis zur Header-Zeile)
+        for row in reader:
+            if not row:
+                continue
+
+            # Prüfe ob wir bei der Header-Zeile angekommen sind
+            if row[0] == 'ID':
+                # Ab hier kommen die strukturierten Daten
+                header = row
+                break
+
+            # Speichere Metadata
+            if len(row) >= 2:
+                key = row[0]
+                value = row[1]
+                metadata[key] = value
+
+        # Lese die Items
+        for row in reader:
+            if not row or not row[0]:
+                continue
+
+            item = {}
+            for i, col in enumerate(header):
+                if i < len(row):
+                    item[col] = row[i]
+                else:
+                    item[col] = ''
+
+            items.append(item)
+
+    return metadata, items
+
+
 def format_timestamp(timestamp_str: str) -> str:
     """Formatiert einen Unix-Timestamp zu einem lesbaren Datum"""
     try:
@@ -24,8 +69,26 @@ def format_timestamp(timestamp_str: str) -> str:
         return timestamp_str
 
 
+def get_image_base64(image_path: str) -> str:
+    """Konvertiert ein Bild zu Base64 für Inline-HTML"""
+    try:
+        with open(image_path, 'rb') as f:
+            data = f.read()
+            ext = Path(image_path).suffix.lower()
+            mime_type = 'image/jpeg' if ext in ['.jpg', '.jpeg'] else 'image/png'
+            return f"data:{mime_type};base64,{base64.b64encode(data).decode()}"
+    except Exception as e:
+        print(f"Warnung: Konnte Bild nicht laden: {image_path} - {e}")
+        return ""
+
+
 def parse_primary_value(primary: str) -> Tuple[str, str]:
-    """Parst den Primary-Wert (Format: "ID|Wert")"""
+    """
+    Parst den Primary-Wert (Format: "ID|Wert")
+
+    Returns:
+        Tuple[str, str]: (option_id, display_value)
+    """
     if '|' in primary:
         parts = primary.split('|', 1)
         return parts[0], parts[1]
@@ -59,10 +122,15 @@ def get_status_type(value: str) -> str:
 
 
 def format_text_with_chinese_red(text: str) -> str:
-    """Formatiert Text so, dass chinesische Zeichen rot dargestellt werden"""
+    """
+    Formatiert Text so, dass chinesische Zeichen rot dargestellt werden
+    """
+    import re
+
     # Regex für chinesische Zeichen inkl. Zahlen und NUR chinesische Satzzeichen
     chinese_pattern = re.compile(r'[\u4e00-\u9fff\d，。、：；！？（）【】《》""''・\s]+')
 
+    # Ersetze chinesische Zeichen mit rot formatiertem Span
     def replace_chinese(match):
         matched_text = match.group(0)
         # Nur rot färben, wenn mindestens ein chinesisches Zeichen vorhanden ist
@@ -75,7 +143,12 @@ def format_text_with_chinese_red(text: str) -> str:
 
 
 def remove_gps_coordinates(text: str) -> str:
-    """Entfernt GPS-Koordinaten aus dem Text"""
+    """
+    Entfernt GPS-Koordinaten aus dem Text
+    """
+    import re
+
+    # Entferne Zeilen, die nur Koordinaten enthalten (z.B. "30.989;121.216" oder mit Komma)
     lines = text.split('\n')
     cleaned_lines = []
 
@@ -90,55 +163,34 @@ def remove_gps_coordinates(text: str) -> str:
         # Entferne Koordinaten in Klammern am Ende einer Zeile
         line = re.sub(r'\s*\([\d\.\,\s\-]+\)\s*$', '', line)
 
-        if line:
+        if line:  # Nur nicht-leere Zeilen
             cleaned_lines.append(line)
 
     return '\n'.join(cleaned_lines)
 
 
 def is_item_answered(item: Dict) -> bool:
-    """Prüft, ob ein Item beantwortet wurde"""
+    """
+    Prüft, ob ein Item beantwortet wurde
+
+    Returns:
+        bool: True wenn beantwortet, False wenn leer
+    """
+    # Ein Item gilt als beantwortet, wenn mindestens eines vorhanden ist:
+    # - Primary (Antwort)
+    # - Secondary (zusätzliche Info)
+    # - Note (Notiz)
+    # - Media (Fotos)
     return bool(item.get('Primary') or item.get('Secondary') or item.get('Note') or item.get('Media'))
 
 
-def read_csv_data(csv_content: str) -> Tuple[Dict, List[Dict]]:
-    """Liest CSV-Daten aus String"""
-    metadata = {}
-    items = []
-
-    reader = csv.reader(io.StringIO(csv_content))
-
-    for row in reader:
-        if not row:
-            continue
-
-        if row[0] == 'ID':
-            header = row
-            break
-
-        if len(row) >= 2:
-            key = row[0]
-            value = row[1]
-            metadata[key] = value
-
-    for row in reader:
-        if not row or not row[0]:
-            continue
-
-        item = {}
-        for i, col in enumerate(header):
-            if i < len(row):
-                item[col] = row[i]
-            else:
-                item[col] = ''
-
-        items.append(item)
-
-    return metadata, items
-
-
 def organize_items_by_sections(items: List[Dict]) -> List[Dict]:
-    """Organisiert Items nach Sections"""
+    """
+    Organisiert Items nach Sections
+
+    Returns:
+        List[Dict]: Liste von Sections mit ihren zugehörigen Items
+    """
     sections = []
     current_section = None
 
@@ -154,21 +206,43 @@ def organize_items_by_sections(items: List[Dict]) -> List[Dict]:
         elif current_section:
             current_section['items'].append(item)
 
+    # Füge die letzte Section hinzu
     if current_section:
         sections.append(current_section)
 
     return sections
 
 
-def generate_html_report(csv_content: str, images_dict: Dict[str, str], logo_base64: str = '') -> str:
+def get_machine_designation(items: List[Dict]) -> str:
     """
-    Generiert HTML-Bericht
-    images_dict: {filename: base64_data}
+    Extrahiert die Machine designation aus den Items
     """
-    import re
+    for item in items:
+        if 'Machine designation' in item.get('Label', '') or '机器名称' in item.get('Label', ''):
+            return item.get('Primary', 'Audit Bericht')
+    return 'Audit Bericht'
 
-    metadata, items = read_csv_data(csv_content)
+
+def generate_html_report(csv_path: str, output_path: str):
+    """
+    Generiert den HTML-Bericht
+    """
+    print("Lese CSV-Datei...")
+    metadata, items = read_csv_data(csv_path)
+
+    print("Organisiere Daten...")
     sections = organize_items_by_sections(items)
+
+    # Lade Logo
+    logo_path = '/Users/volkerallmendinger/Downloads/download-4.png'
+    logo_base64 = ''
+    if os.path.exists(logo_path):
+        logo_base64 = get_image_base64(logo_path)
+
+    # Bestimme den Bildordner
+    csv_dir = os.path.dirname(csv_path)
+
+    print("Generiere HTML...")
 
     # HTML-Template
     html = f"""<!DOCTYPE html>
@@ -520,6 +594,7 @@ def generate_html_report(csv_content: str, images_dict: Dict[str, str], logo_bas
             display: none;
         }}
 
+        /* Print Styles */
         @media print {{
             .filter-container,
             .lightbox,
@@ -551,11 +626,13 @@ def generate_html_report(csv_content: str, images_dict: Dict[str, str], logo_bas
                 margin-bottom: 15px;
             }}
 
+            /* Seitenumbruch nach Items mit vielen Fotos (>= 5) */
             .item.page-break-after {{
                 page-break-after: always;
                 break-after: page;
             }}
 
+            /* Seitenumbruch nach jedem 2. Item mit wenigen Fotos */
             .item.page-break-after-small {{
                 page-break-after: always;
                 break-after: page;
@@ -604,6 +681,7 @@ def generate_html_report(csv_content: str, images_dict: Dict[str, str], logo_bas
             background: #f8f9fa;
         }}
 
+        /* Spezielle kompakte Darstellung für Title Page */
         .section.title-page .section-content {{
             padding: 12px;
         }}
@@ -742,6 +820,7 @@ def generate_html_report(csv_content: str, images_dict: Dict[str, str], logo_bas
             cursor: pointer;
         }}
 
+        /* Lightbox für Bildansicht */
         .lightbox {{
             display: none;
             position: fixed;
@@ -815,6 +894,31 @@ def generate_html_report(csv_content: str, images_dict: Dict[str, str], logo_bas
 
             .image-container img {{
                 height: 300px;
+            }}
+
+            .score-value {{
+                font-size: 2em;
+            }}
+        }}
+
+
+        @media print {{
+            body {{
+                background: white;
+                padding: 0;
+            }}
+
+            .container {{
+                box-shadow: none;
+                padding: 20px;
+            }}
+
+            .item {{
+                page-break-inside: avoid;
+            }}
+
+            .lightbox {{
+                display: none !important;
             }}
         }}
     </style>
@@ -897,6 +1001,7 @@ def generate_html_report(csv_content: str, images_dict: Dict[str, str], logo_bas
                     status_label = 'n.a.'
 
             item_id = item['ID'].replace('-', '_')
+            # Kürze Label für TOC
             item_label = item['Label'][:60] + ('...' if len(item['Label']) > 60 else '')
 
             toc_html += f"""
@@ -923,10 +1028,12 @@ def generate_html_report(csv_content: str, images_dict: Dict[str, str], logo_bas
         answered_items = [item for item in section['items']
                          if item['Type'] != 'category' and is_item_answered(item)]
 
+        # Skip Section wenn keine beantworteten Items vorhanden sind
         if not answered_items:
             continue
 
         section_id = section['id'].replace('-', '_')
+        # Prüfe ob es die Title Page Section ist
         is_title_page = 'title' in section['label'].lower() or '标题页' in section['label']
         title_page_class = ' title-page' if is_title_page else ''
 
@@ -943,12 +1050,15 @@ def generate_html_report(csv_content: str, images_dict: Dict[str, str], logo_bas
             other_items = [item for item in items_to_display if item not in machine_items]
             items_to_display = machine_items + other_items
 
+        # Zähler für kleine Items (< 5 Fotos) für intelligente Seitenumbrüche
         small_items_count = 0
 
         for item in items_to_display:
+            # Skip category items (diese sind nur Gruppierungen)
             if item['Type'] == 'category':
                 continue
 
+            # Skip nicht beantwortete Fragen
             if not is_item_answered(item):
                 continue
 
@@ -956,6 +1066,7 @@ def generate_html_report(csv_content: str, images_dict: Dict[str, str], logo_bas
             if 'location' in item.get('Label', '').lower() or '地点' in item.get('Label', ''):
                 continue
 
+            # Bestimme den Status für Filter
             status_type = 'other'
             if item['Primary']:
                 option_id, display_value = parse_primary_value(item['Primary'])
@@ -967,15 +1078,18 @@ def generate_html_report(csv_content: str, images_dict: Dict[str, str], logo_bas
                 image_ids = [img_id.strip() for img_id in item['Media'].split(';') if img_id.strip()]
                 photo_count = len(image_ids)
 
+            # Bestimme ob Seitenumbruch nötig ist
             page_break_class = ''
             if photo_count >= 5:
+                # Viele Fotos: Seitenumbruch direkt nach diesem Item
                 page_break_class = 'page-break-after'
-                small_items_count = 0
+                small_items_count = 0  # Reset counter
             else:
+                # Wenige Fotos: Zähle und füge nach jedem 2. kleinen Item einen Umbruch ein
                 small_items_count += 1
                 if small_items_count >= 2:
                     page_break_class = 'page-break-after-small'
-                    small_items_count = 0
+                    small_items_count = 0  # Reset counter
 
             item_id = item['ID'].replace('-', '_')
             html += f"""
@@ -983,25 +1097,27 @@ def generate_html_report(csv_content: str, images_dict: Dict[str, str], logo_bas
                     <div class="item-label">{item['Label']}</div>
 """
 
-            # Zeige Primary Value
+            # Zeige Primary Value (Antwort/Auswahl)
             if item['Primary']:
                 option_id, display_value = parse_primary_value(item['Primary'])
 
-                # Formatiere Timestamps
+                # Formatiere Timestamps (wenn es nur Zahlen sind und wahrscheinlich ein Timestamp ist)
                 if display_value.strip().isdigit() and len(display_value.strip()) == 10:
                     display_value = format_timestamp(display_value)
 
-                # Entferne GPS-Koordinaten
+                # Entferne GPS-Koordinaten aus Location-Feldern
                 if 'location' in item['Label'].lower() or '地点' in item['Label']:
                     display_value = remove_gps_coordinates(display_value)
 
                 color_class = get_color_class(display_value)
                 html += f'                    <div class="item-value {color_class}">{display_value}</div>\n'
 
-            # Zeige Notes
+            # Zeige Notes (mit chinesischem Text in rot, außer bei Location)
+            # Nur anzeigen wenn vorhanden und unterschiedlich von Secondary
             if item['Note']:
                 is_location = 'location' in item['Label'].lower() or '地点' in item['Label']
 
+                # Entferne GPS-Koordinaten aus Location-Feldern
                 if is_location:
                     formatted_note = remove_gps_coordinates(item["Note"])
                 else:
@@ -1009,8 +1125,10 @@ def generate_html_report(csv_content: str, images_dict: Dict[str, str], logo_bas
 
                 html += f'                    <div class="item-notes">{formatted_note}</div>\n'
             elif item['Secondary'] and item['Secondary'] != item['Primary']:
+                # Zeige Secondary nur wenn keine Note vorhanden ist
                 is_location = 'location' in item['Label'].lower() or '地点' in item['Label']
 
+                # Entferne GPS-Koordinaten aus Location-Feldern
                 if is_location:
                     formatted_secondary = remove_gps_coordinates(item["Secondary"])
                 else:
@@ -1026,10 +1144,18 @@ def generate_html_report(csv_content: str, images_dict: Dict[str, str], logo_bas
                     html += '                    <div class="images-grid">\n'
 
                     for img_id in image_ids:
-                        # Suche nach dem Bild im images_dict
-                        img_base64 = images_dict.get(img_id, '')
-                        if img_base64:
-                            html += f'''                        <div class="image-container">
+                        # Suche nach dem Bild (kann .jpg oder .png sein)
+                        img_path = None
+                        for ext in ['.jpg', '.jpeg', '.png']:
+                            test_path = os.path.join(csv_dir, img_id + ext)
+                            if os.path.exists(test_path):
+                                img_path = test_path
+                                break
+
+                        if img_path:
+                            img_base64 = get_image_base64(img_path)
+                            if img_base64:
+                                html += f'''                        <div class="image-container">
                             <img src="{img_base64}" alt="Bild {img_id}" onclick="openLightbox(this.src)">
                         </div>
 '''
@@ -1062,21 +1188,25 @@ def generate_html_report(csv_content: str, images_dict: Dict[str, str], logo_bas
             document.getElementById('lightbox').classList.remove('active');
         }
 
+        // ESC-Taste zum Schließen
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
                 closeLightbox();
             }
         });
 
+        // Filter-Funktionalität
         let activeFilters = new Set(['ok', 'noncompliant', 'info', 'na', 'other']);
 
         function toggleFilter(element, filterType) {
             const checkbox = element.querySelector('input[type="checkbox"]');
 
+            // Toggle checkbox wenn auf div geklickt wurde
             if (event.target === element) {
                 checkbox.checked = !checkbox.checked;
             }
 
+            // Toggle active class
             if (checkbox.checked) {
                 element.classList.add('active');
                 activeFilters.add(filterType);
@@ -1092,6 +1222,7 @@ def generate_html_report(csv_content: str, images_dict: Dict[str, str], logo_bas
             let visibleCount = 0;
             let totalCount = 0;
 
+            // Durchlaufe alle Items
             document.querySelectorAll('.item').forEach(item => {
                 totalCount++;
                 const status = item.getAttribute('data-status');
@@ -1104,6 +1235,7 @@ def generate_html_report(csv_content: str, images_dict: Dict[str, str], logo_bas
                 }
             });
 
+            // Verstecke Sections ohne sichtbare Items
             document.querySelectorAll('.section').forEach(section => {
                 const visibleItems = section.querySelectorAll('.item:not(.hidden)');
                 if (visibleItems.length === 0) {
@@ -1113,6 +1245,7 @@ def generate_html_report(csv_content: str, images_dict: Dict[str, str], logo_bas
                 }
             });
 
+            // Update Statistik
             updateFilterStats(visibleCount, totalCount);
         }
 
@@ -1125,10 +1258,12 @@ def generate_html_report(csv_content: str, images_dict: Dict[str, str], logo_bas
             }
         }
 
+        // Initialisiere Filter-Statistik beim Laden
         document.addEventListener('DOMContentLoaded', function() {
             applyFilters();
         });
 
+        // Inhaltsverzeichnis Toggle
         function toggleTOC() {
             const sidebar = document.getElementById('toc-sidebar');
             const body = document.body;
@@ -1137,10 +1272,12 @@ def generate_html_report(csv_content: str, images_dict: Dict[str, str], logo_bas
             body.classList.toggle('toc-open');
         }
 
+        // Scroll zu Section
         function scrollToSection(sectionId) {
             const element = document.getElementById(sectionId);
             if (element) {
                 element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                // Highlight effect
                 element.style.transition = 'background 0.5s';
                 element.style.background = '#fff3cd';
                 setTimeout(() => {
@@ -1149,10 +1286,12 @@ def generate_html_report(csv_content: str, images_dict: Dict[str, str], logo_bas
             }
         }
 
+        // Scroll zu Item
         function scrollToItem(itemId) {
             const element = document.getElementById(itemId);
             if (element) {
                 element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                // Highlight effect
                 element.style.transition = 'background 0.5s, transform 0.3s';
                 element.style.background = '#fff3cd';
                 element.style.transform = 'scale(1.02)';
@@ -1163,6 +1302,7 @@ def generate_html_report(csv_content: str, images_dict: Dict[str, str], logo_bas
             }
         }
 
+        // Schließe TOC bei ESC-Taste
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
                 const sidebar = document.getElementById('toc-sidebar');
@@ -1178,137 +1318,88 @@ def generate_html_report(csv_content: str, images_dict: Dict[str, str], logo_bas
 </html>
 """
 
-    return html
+    # Schreibe HTML-Datei
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write(html)
+
+    print(f"✓ HTML-Bericht erfolgreich erstellt: {output_path}")
 
 
-# Streamlit App
+def find_audit_folders(script_dir: str) -> List[str]:
+    """
+    Findet alle Audit-Ordner im Script-Verzeichnis
+    """
+    audit_folders = []
+
+    for item in os.listdir(script_dir):
+        item_path = os.path.join(script_dir, item)
+        # Prüfe ob es ein Verzeichnis ist und mit "audit_" beginnt
+        if os.path.isdir(item_path) and item.startswith('audit_'):
+            audit_folders.append(item_path)
+
+    return audit_folders
+
+
+def find_csv_in_folder(folder_path: str) -> str:
+    """
+    Findet die CSV-Datei in einem Ordner
+    """
+    for file in os.listdir(folder_path):
+        if file.endswith('.csv'):
+            return os.path.join(folder_path, file)
+    return None
+
+
 def main():
-    st.set_page_config(
-        page_title="Audit Report Generator",
-        page_icon="📋",
-        layout="wide"
-    )
+    """Hauptfunktion"""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
 
-    st.title("📋 Audit Report Generator")
-    st.markdown("---")
+    print("=" * 60)
+    print("HTML Audit-Bericht Generator")
+    print("=" * 60)
 
-    # Sidebar
-    with st.sidebar:
-        st.header("ℹ️ Instructions")
-        st.markdown("""
-        1. **Upload CSV file**
-        2. **Upload photos** (optional)
-        3. **Upload logo** (optional)
-        4. **Generate report**
-        5. **Download HTML file**
-        """)
+    # Finde alle Audit-Ordner
+    audit_folders = find_audit_folders(script_dir)
 
-        st.markdown("---")
-        st.markdown("© 2026 Umenge Machine Inspections")
+    if not audit_folders:
+        print("FEHLER: Keine Audit-Ordner gefunden!")
+        print(f"Suche nach Ordnern mit 'audit_' Präfix in: {script_dir}")
+        sys.exit(1)
 
-    # Main content
-    col1, col2 = st.columns([2, 1])
+    print(f"Gefundene Audit-Ordner: {len(audit_folders)}")
+    print()
 
-    with col1:
-        st.header("1. Upload CSV File")
-        csv_file = st.file_uploader(
-            "Select the audit CSV file",
-            type=['csv'],
-            help="The CSV file containing the audit data"
-        )
+    # Verarbeite jeden Audit-Ordner
+    for audit_folder in audit_folders:
+        folder_name = os.path.basename(audit_folder)
+        print(f"Verarbeite: {folder_name}")
 
-        st.header("2. Upload Photos")
-        image_files = st.file_uploader(
-            "Select photos (multiple files possible)",
-            type=['jpg', 'jpeg', 'png'],
-            accept_multiple_files=True,
-            help="Photos to be included in the report"
-        )
+        # Finde CSV-Datei
+        csv_file = find_csv_in_folder(audit_folder)
 
-        st.header("3. Upload Logo (Optional)")
-        logo_file = st.file_uploader(
-            "Company Logo",
-            type=['jpg', 'jpeg', 'png'],
-            help="Optional: Your company logo for the header"
-        )
+        if not csv_file:
+            print(f"  ⚠ Keine CSV-Datei gefunden in {folder_name}")
+            continue
 
-    with col2:
-        st.header("Status")
+        # Erstelle Output-Dateinamen
+        csv_basename = os.path.splitext(os.path.basename(csv_file))[0]
+        output_file = os.path.join(script_dir, f"{csv_basename}_bericht.html")
 
-        if csv_file:
-            st.success(f"✅ CSV: {csv_file.name}")
-        else:
-            st.info("⏳ Waiting for CSV file")
+        print(f"  CSV: {os.path.basename(csv_file)}")
+        print(f"  Output: {os.path.basename(output_file)}")
 
-        if image_files:
-            st.success(f"✅ {len(image_files)} photos uploaded")
-        else:
-            st.info("⏳ No photos (optional)")
+        try:
+            # Generiere Bericht
+            generate_html_report(csv_file, output_file)
+            print(f"  ✓ Erfolgreich erstellt!")
+        except Exception as e:
+            print(f"  ✗ Fehler: {e}")
 
-        if logo_file:
-            st.success(f"✅ Logo: {logo_file.name}")
+        print()
 
-    st.markdown("---")
-
-    # Generate button
-    if csv_file:
-        if st.button("🚀 Generate Report", type="primary", use_container_width=True):
-            with st.spinner("Generating report..."):
-                try:
-                    # Read CSV
-                    csv_content = csv_file.read().decode('utf-8-sig')
-
-                    # Process images
-                    images_dict = {}
-                    if image_files:
-                        for img_file in image_files:
-                            img_name = img_file.name.split('.')[0]  # without extension
-                            img_data = base64.b64encode(img_file.read()).decode()
-                            ext = img_file.name.split('.')[-1].lower()
-                            mime = 'image/jpeg' if ext in ['jpg', 'jpeg'] else 'image/png'
-                            images_dict[img_name] = f"data:{mime};base64,{img_data}"
-
-                    # Process logo
-                    logo_base64 = ''
-                    if logo_file:
-                        logo_data = base64.b64encode(logo_file.read()).decode()
-                        ext = logo_file.name.split('.')[-1].lower()
-                        mime = 'image/jpeg' if ext in ['jpg', 'jpeg'] else 'image/png'
-                        logo_base64 = f"data:{mime};base64,{logo_data}"
-
-                    # Generate HTML
-                    html_content = generate_html_report(csv_content, images_dict, logo_base64)
-
-                    # Calculate statistics
-                    file_size_mb = len(html_content.encode('utf-8')) / (1024 * 1024)
-
-                    st.success("✅ Report generated successfully!")
-
-                    # Show statistics
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Photos", len(images_dict))
-                    with col2:
-                        st.metric("File Size", f"{file_size_mb:.1f} MB")
-                    with col3:
-                        st.metric("Format", "HTML")
-
-                    # Download button
-                    st.download_button(
-                        label="📥 Download HTML Report",
-                        data=html_content,
-                        file_name=f"audit_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
-                        mime="text/html",
-                        use_container_width=True
-                    )
-
-                    # Info box instead of preview (prevents WebSocket errors for large reports)
-                    st.info("💡 **Note:** Download the HTML file and open it in your browser to view the complete report.")
-
-                except Exception as e:
-                    st.error(f"❌ Error generating report: {str(e)}")
-    else:
-        st.warning("⚠️ Please upload a CSV file first")
+    print("=" * 60)
+    print("Fertig! Alle Berichte wurden erstellt.")
+    print("=" * 60)
 
 
 if __name__ == '__main__':
